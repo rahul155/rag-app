@@ -20,6 +20,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+def root():
+    return {"message": "API WORKING"}
+
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
