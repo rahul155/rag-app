@@ -13,7 +13,7 @@ class QdrantStorage:
         self.collection = collection
         self.dim = dim
 
-        # Create collection if not exists
+        # Create collection if it doesn't exist
         if not self.client.collection_exists(self.collection):
             self.client.create_collection(
                 collection_name=self.collection,
@@ -23,6 +23,7 @@ class QdrantStorage:
                 ),
             )
 
+    # -------- UPSERT --------
     def upsert(self, ids, vectors, payloads):
         points = [
             PointStruct(
@@ -34,19 +35,24 @@ class QdrantStorage:
         ]
         self.client.upsert(self.collection, points=points)
 
-    # 🔥 HYBRID SEARCH (vector + keyword)
+    # -------- SEARCH (HYBRID SEARCH) --------
     def search(self, query_vector, top_k: int = 5, keyword: str = None):
         response = self.client.query_points(
             collection_name=self.collection,
             query=query_vector.tolist() if hasattr(query_vector, "tolist") else query_vector,
             with_payload=True,
-            limit=top_k * 2
+            limit=top_k * 3   # 🔥 fetch more for better ranking
         )
 
         results = response.points
 
         contexts = []
         sources = set()
+
+        # 🔥 Extract keywords from question
+        keywords = []
+        if keyword:
+            keywords = [w.lower() for w in keyword.split() if len(w) > 3]
 
         for r in results:
             payload = r.payload or {}
@@ -56,7 +62,16 @@ class QdrantStorage:
             if not text:
                 continue
 
-            if keyword and keyword.lower() in text.lower():
+            text_lower = text.lower()
+
+            # 🔥 Score based on keyword matches
+            score = 0
+            for k in keywords:
+                if k in text_lower:
+                    score += 1
+
+            # 🔥 Push higher score chunks to top
+            if score > 0:
                 contexts.insert(0, text)
             else:
                 contexts.append(text)
