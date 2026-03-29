@@ -22,6 +22,10 @@ app.add_middleware(
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+@app.get("/test123")
+def test():
+    return {"status": "THIS IS NEW CODE"}
+
 
 # ✅ ROOT TEST
 @app.get("/")
