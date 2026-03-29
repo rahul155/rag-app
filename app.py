@@ -83,7 +83,7 @@ async def ingest_pdf(file: UploadFile = File(...)):
 def query_pdf(data: dict):
     try:
         question = data["question"]
-        top_k = int(data.get("top_k", 5))
+        top_k = int(data.get("top_k", 10))
 
         # Step 1: Embed query
         query_vec = embed_texts([question])[0]
@@ -92,7 +92,7 @@ def query_pdf(data: dict):
         store = QdrantStorage()
         found = store.search(query_vec, top_k)
 
-        contexts = found["contexts"][:3]   # 🔥 best 3 only (fast + accurate)
+        contexts = found["contexts"][:7]   
         sources = found["sources"]
 
         if not contexts:
