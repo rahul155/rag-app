@@ -10,7 +10,7 @@ client = OpenAI()
 EMBED_MODEL = "text-embedding-3-large"
 EMBED_DIM = 3072
 
-splitter = SentenceSplitter(chunk_size=1000, chunk_overlap=200)
+splitter = SentenceSplitter(chunk_size=500, chunk_overlap=100)
 
 
 # -------- LOAD + CHUNK PDF --------
@@ -22,16 +22,28 @@ def load_and_chunk_pdf(path: str):
 
     chunks = []
     for t in texts:
-        chunks.extend(splitter.split_text(t))
+        chunks.extend([c for c in splitter.split_text(t) if len(c.strip()) > 30])
 
-    return chunks
+    return chunks[:500]
 
 
 # -------- EMBEDDINGS --------
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    response = client.embeddings.create(
-        model=EMBED_MODEL,
-        input=texts,
-    )
+    all_embeddings = []
+    batch_size = 50  # safe for OpenAI
 
-    return [item.embedding for item in response.data]
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+
+        try:
+            response = client.embeddings.create(
+                model=EMBED_MODEL,
+                input=batch,
+            )
+            all_embeddings.extend([item.embedding for item in response.data])
+
+        except Exception as e:
+            print("Embedding error:", str(e))
+            continue
+
+    return all_embeddings

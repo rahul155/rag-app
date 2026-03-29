@@ -70,7 +70,7 @@ async def ingest_pdf(file: UploadFile = File(...)):
 @app.post("/rag/query_pdf_ai")
 def query_pdf(data: dict):
     question = data["question"]
-    top_k = int(data.get("top_k", 5))
+    top_k = int(data.get("top_k", 10))
 
     query_vec = embed_texts([question])[0]
 
@@ -90,10 +90,12 @@ def query_pdf(data: dict):
     context_block = "\n\n".join(f"- {c}" for c in contexts)
 
     prompt = (
-        "Use the following context to answer the question.\n\n"
-        f"Context:\n{context_block}\n\n"
-        f"Question: {question}\n"
-        "Answer concisely using the context above."
+    "You are a precise assistant.\n\n"
+    "Answer ONLY from the given context.\n"
+    "If answer exists, extract it clearly.\n"
+    "If not, say: 'Not found in context'.\n\n"
+    f"Context:\n{context_block}\n\n"
+    f"Question: {question}"
     )
 
     res = client.chat.completions.create(
