@@ -6,6 +6,8 @@ st.set_page_config(page_title="RAG PDF App", page_icon="📄")
 
 BASE_URL = os.getenv("BACKEND_URL")
 
+st.write("Backend URL:", BASE_URL)
+
 # ---------- Upload ----------
 st.title("📄 Upload PDF")
 
