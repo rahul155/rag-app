@@ -90,7 +90,7 @@ def query_pdf(data: dict):
 
         # Step 2: Search
         store = QdrantStorage()
-        found = store.search(query_vec, top_k)
+        found = store.search(query_vec, top_k,keyword=question)
 
         contexts = found["contexts"][:7]   
         sources = found["sources"]
