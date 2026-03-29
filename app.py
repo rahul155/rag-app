@@ -12,7 +12,7 @@ load_dotenv()
 
 app = FastAPI()
 
-# ✅ CORS (needed for Streamlit)
+# ✅ CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,35 +24,69 @@ app.add_middleware(
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-# ---------------- TEST ROUTES ----------------
+# ---------------- TEST ----------------
 @app.get("/")
 def root():
     return {"message": "API WORKING"}
 
-@app.get("/test123")
-def test():
-    return {"status": "THIS IS NEW CODE"}
+
+# ---------------- RERANK FUNCTION ----------------
+def rerank_contexts(question: str, contexts: list[str]) -> list[str]:
+    if not contexts:
+        return []
+
+    joined_contexts = "\n\n".join(
+        [f"{i}. {c}" for i, c in enumerate(contexts)]
+    )
+
+    prompt = (
+        "You are given a list of context chunks.\n\n"
+        "Select the 3 MOST relevant chunks for answering the question.\n"
+        "Return ONLY the numbers separated by commas (e.g., 0,2,4).\n\n"
+        f"Question: {question}\n\n"
+        f"Contexts:\n{joined_contexts}"
+    )
+
+    try:
+        res = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+
+        output = res.choices[0].message.content.strip()
+
+        indices = [
+            int(x.strip())
+            for x in output.split(",")
+            if x.strip().isdigit()
+        ]
+
+        selected = [contexts[i] for i in indices if i < len(contexts)]
+
+        return selected if selected else contexts[:3]
+
+    except Exception as e:
+        print("Rerank error:", str(e))
+        return contexts[:3]
 
 
-# ---------------- INGEST PDF ----------------
+# ---------------- INGEST ----------------
 @app.post("/rag/ingest_pdf")
 async def ingest_pdf(file: UploadFile = File(...)):
     try:
         temp_path = f"temp_{file.filename}"
 
-        # Save file
         with open(temp_path, "wb") as f:
             f.write(await file.read())
 
         source_id = file.filename
 
-        # Load + chunk
+        # 🔥 Limit chunks for performance
         chunks = load_and_chunk_pdf(temp_path)[:200]
 
-        # Embed (batched inside function)
         vecs = embed_texts(chunks)
 
-        # IDs + payload
         ids = [
             str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source_id}:{i}"))
             for i in range(len(chunks))
@@ -63,10 +97,8 @@ async def ingest_pdf(file: UploadFile = File(...)):
             for i in range(len(chunks))
         ]
 
-        # Store
         QdrantStorage().upsert(ids, vecs, payloads)
 
-        # Cleanup
         try:
             os.remove(temp_path)
         except:
@@ -85,14 +117,15 @@ def query_pdf(data: dict):
         question = data["question"]
         top_k = int(data.get("top_k", 10))
 
-        # Step 1: Embed query
+        # Step 1: Embed
         query_vec = embed_texts([question])[0]
 
-        # Step 2: Search
+        # Step 2: Search (hybrid)
         store = QdrantStorage()
-        found = store.search(query_vec, top_k,keyword=question)
+        found = store.search(query_vec, top_k=15, keyword=question)
 
-        contexts = found["contexts"][:5]   
+        # 🔥 Step 3: RERANK
+        contexts = rerank_contexts(question, found["contexts"])
         sources = found["sources"]
 
         if not contexts:
@@ -112,25 +145,25 @@ def query_pdf(data: dict):
             else:
                 break
 
-        # 🔥 Better prompt
+        # 🔥 Final prompt (with fallback)
         prompt = (
-            "You are a precise assistant.\n\n"
-            "Answer ONLY from the given context.\n"
-            "Extract exact information if present.\n"
-            "If not found, say: 'Not found in context'.\n\n"
+            "You are a helpful assistant.\n\n"
+            "First try to answer using the provided context.\n"
+            "If the context is sufficient, use it.\n"
+            "If not, answer using your general knowledge.\n\n"
             f"Context:\n{context_block}\n\n"
             f"Question: {question}"
         )
 
-        # Step 3: LLM call
+        # Step 4: LLM
         res = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You answer strictly using context."},
+                {"role": "system", "content": "You answer clearly and accurately."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
-            max_tokens=300
+            max_tokens=400
         )
 
         answer = res.choices[0].message.content.strip()
