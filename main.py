@@ -2,6 +2,7 @@ import os
 import uuid
 from fastapi import FastAPI, UploadFile, File
 from dotenv import load_dotenv
+from fastapi.middleware.cors import CORSMiddleware
 
 from data_loader import load_and_chunk_pdf, embed_texts
 from vector_db import QdrantStorage
@@ -11,6 +12,13 @@ from openai import OpenAI
 load_dotenv()
 
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # allow all (for now)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
