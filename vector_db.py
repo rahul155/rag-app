@@ -6,10 +6,9 @@ from qdrant_client.models import VectorParams, Distance, PointStruct
 class QdrantStorage:
     def __init__(self, collection="docs", dim=3072):
         self.client = QdrantClient(
-            url=os.getenv("https://c639a804-9609-427e-b807-c45bb36bcc9d.eu-west-1-0.aws.cloud.qdrant.io:6333"),          
-            api_key=os.getenv("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.zV2W-mk16LOA7AvflBuTPGcMQzmt_w6aLyWYlJHg2bQ"),   
-            timeout=30
-        )
+            url=os.getenv("QDRANT_URL"),
+            api_key=os.getenv("QDRANT_API_KEY"),
+            timeout=30 )
         self.collection = collection
         self.dim = dim
 
