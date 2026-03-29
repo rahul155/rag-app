@@ -47,7 +47,7 @@ async def ingest_pdf(file: UploadFile = File(...)):
         source_id = file.filename
 
         # Load + chunk
-        chunks = load_and_chunk_pdf(temp_path)
+        chunks = load_and_chunk_pdf(temp_path)[:200]
 
         # Embed (batched inside function)
         vecs = embed_texts(chunks)
@@ -130,7 +130,7 @@ def query_pdf(data: dict):
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
-            max_tokens=512
+            max_tokens=300
         )
 
         answer = res.choices[0].message.content.strip()

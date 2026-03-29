@@ -32,13 +32,13 @@ def load_and_chunk_pdf(path: str):
         ])
 
     # 🔥 limit to avoid overload on large PDFs
-    return chunks[:500]
+    return chunks[:200]
 
 
 # -------- EMBEDDINGS (with batching + retry) --------
 def embed_texts(texts: list[str]) -> list[list[float]]:
     all_embeddings = []
-    batch_size = 50
+    batch_size = 20
     max_retries = 3
 
     for i in range(0, len(texts), batch_size):
