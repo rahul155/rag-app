@@ -10,3 +10,6 @@ wheels/
 .venv
 .env
 *.env
+qdrant_storage/
+*.db
+*.dat
