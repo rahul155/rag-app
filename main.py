@@ -1,6 +1,6 @@
 import os
 import uuid
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File
 from dotenv import load_dotenv
 
 from data_loader import load_and_chunk_pdf, embed_texts
@@ -17,17 +17,23 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ---------------- INGEST PDF ----------------
 @app.post("/rag/ingest_pdf")
-def ingest_pdf(data: dict):
-    pdf_path = data["pdf_path"]
-    source_id = data.get("source_id", pdf_path)
+async def ingest_pdf(file: UploadFile = File(...)):
+
+    # Save temp file
+    temp_path = f"temp_{file.filename}"
+
+    with open(temp_path, "wb") as f:
+        f.write(await file.read())
+
+    source_id = file.filename
 
     # Load & chunk
-    chunks = load_and_chunk_pdf(pdf_path)
+    chunks = load_and_chunk_pdf(temp_path)
 
     # Embed
     vecs = embed_texts(chunks)
 
-    # Prepare IDs + payload
+    # Prepare IDs
     ids = [
         str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source_id}:{i}"))
         for i in range(len(chunks))
@@ -38,8 +44,14 @@ def ingest_pdf(data: dict):
         for i in range(len(chunks))
     ]
 
-    # Store
+    # Store in Qdrant
     QdrantStorage().upsert(ids, vecs, payloads)
+
+    # Clean temp file
+    try:
+        os.remove(temp_path)
+    except:
+        pass
 
     return {"ingested": len(chunks)}
 
@@ -50,10 +62,8 @@ def query_pdf(data: dict):
     question = data["question"]
     top_k = int(data.get("top_k", 5))
 
-    # Embed question
     query_vec = embed_texts([question])[0]
 
-    # Search
     store = QdrantStorage()
     found = store.search(query_vec, top_k)
 
@@ -67,7 +77,6 @@ def query_pdf(data: dict):
             "num-contexts": 0
         }
 
-    # Build prompt
     context_block = "\n\n".join(f"- {c}" for c in contexts)
 
     prompt = (
@@ -77,7 +86,6 @@ def query_pdf(data: dict):
         "Answer concisely using the context above."
     )
 
-    # Call OpenAI
     res = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[

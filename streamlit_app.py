@@ -1,47 +1,45 @@
 import streamlit as st
 import requests
 import os
-from pathlib import Path
 
-st.set_page_config(page_title="RAG PDF App", page_icon="📄", layout="centered")
+st.set_page_config(page_title="RAG PDF App", page_icon="📄")
 
 BASE_URL = os.getenv("BACKEND_URL")
 
-# ---------- Upload PDF ----------
-st.title("📄 Upload a PDF")
+# ---------- Upload ----------
+st.title("📄 Upload PDF")
 
 uploaded = st.file_uploader("Choose a PDF", type=["pdf"])
 
-if uploaded is not None:
+if uploaded:
     with st.spinner("Uploading and processing..."):
 
-        # Save locally (temporary)
-        uploads_dir = Path("uploads")
-        uploads_dir.mkdir(exist_ok=True)
-        file_path = uploads_dir / uploaded.name
+        files = {
+            "file": (uploaded.name, uploaded.getvalue(), "application/pdf")
+        }
 
-        with open(file_path, "wb") as f:
-            f.write(uploaded.getbuffer())
-
-        # Call backend
         response = requests.post(
             f"{BASE_URL}/rag/ingest_pdf",
-            json={
-                "pdf_path": str(file_path),
-                "source_id": uploaded.name
-            }
+            files=files
         )
 
-    st.success("PDF processed successfully!")
+        st.write("Status:", response.status_code)
+        st.write("Response:", response.text)
 
-# ---------- Ask Question ----------
+    if response.status_code == 200:
+        st.success("PDF processed successfully!")
+    else:
+        st.error("Upload failed")
+
+
+# ---------- Query ----------
 st.divider()
-st.title("💬 Ask a question")
+st.title("💬 Ask Question")
 
 question = st.text_input("Your question")
-top_k = st.number_input("Top K", min_value=1, max_value=10, value=5)
+top_k = st.number_input("Top K", 1, 10, 5)
 
-if st.button("Ask") and question.strip():
+if st.button("Ask") and question:
     with st.spinner("Thinking..."):
 
         response = requests.post(
@@ -52,15 +50,19 @@ if st.button("Ask") and question.strip():
             }
         )
 
-        data = response.json()
+        st.write("Status:", response.status_code)
+        st.write("Raw:", response.text)
 
-        answer = data.get("answer", "")
-        sources = data.get("sources", [])
+        if response.status_code == 200:
+            data = response.json()
 
-    st.subheader("Answer")
-    st.write(answer)
+            st.subheader("Answer")
+            st.write(data.get("answer", ""))
 
-    if sources:
-        st.caption("Sources")
-        for s in sources:
-            st.write(f"- {s}")
+            sources = data.get("sources", [])
+            if sources:
+                st.caption("Sources")
+                for s in sources:
+                    st.write(f"- {s}")
+        else:
+            st.error("Query failed")
