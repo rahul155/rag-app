@@ -13,3 +13,5 @@ wheels/
 qdrant_storage/
 *.db
 *.dat
+uploads/
+*.pdf
