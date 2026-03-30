@@ -13,6 +13,7 @@ class QdrantStorage:
         self.collection = collection
         self.dim = dim
 
+        # 🔥 Create collection if not exists
         if not self.client.collection_exists(self.collection):
             self.client.create_collection(
                 collection_name=self.collection,
@@ -22,6 +23,18 @@ class QdrantStorage:
                 ),
             )
 
+        # 🔥 ALWAYS ensure index exists (important fix)
+        try:
+            self.client.create_payload_index(
+                collection_name=self.collection,
+                field_name="source",
+                field_schema="keyword"
+            )
+        except Exception:
+            # already exists → ignore
+            pass
+
+    # -------- UPSERT --------
     def upsert(self, ids, vectors, payloads):
         points = [
             PointStruct(
@@ -33,7 +46,7 @@ class QdrantStorage:
         ]
         self.client.upsert(self.collection, points=points)
 
-    # 🔥 FIXED SEARCH WITH FILTER
+    # -------- SEARCH (FILTER + HYBRID) --------
     def search(self, query_vector, top_k: int = 5, keyword: str = None, source_id: str = None):
         response = self.client.query_points(
             collection_name=self.collection,
@@ -55,6 +68,7 @@ class QdrantStorage:
         contexts = []
         sources = set()
 
+        # 🔥 keyword extraction
         keywords = []
         if keyword:
             keywords = [w.lower() for w in keyword.split() if len(w) > 3]
@@ -69,6 +83,7 @@ class QdrantStorage:
 
             text_lower = text.lower()
 
+            # 🔥 scoring
             score = sum(1 for k in keywords if k in text_lower)
 
             if score > 0:
