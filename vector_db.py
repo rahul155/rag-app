@@ -13,7 +13,6 @@ class QdrantStorage:
         self.collection = collection
         self.dim = dim
 
-        # Create collection if it doesn't exist
         if not self.client.collection_exists(self.collection):
             self.client.create_collection(
                 collection_name=self.collection,
@@ -23,7 +22,6 @@ class QdrantStorage:
                 ),
             )
 
-    # -------- UPSERT --------
     def upsert(self, ids, vectors, payloads):
         points = [
             PointStruct(
@@ -35,13 +33,21 @@ class QdrantStorage:
         ]
         self.client.upsert(self.collection, points=points)
 
-    # -------- SEARCH (HYBRID SEARCH) --------
-    def search(self, query_vector, top_k: int = 5, keyword: str = None):
+    # 🔥 FIXED SEARCH WITH FILTER
+    def search(self, query_vector, top_k: int = 5, keyword: str = None, source_id: str = None):
         response = self.client.query_points(
             collection_name=self.collection,
             query=query_vector.tolist() if hasattr(query_vector, "tolist") else query_vector,
             with_payload=True,
-            limit=top_k * 3   # 🔥 fetch more for better ranking
+            limit=top_k * 3,
+            query_filter={
+                "must": [
+                    {
+                        "key": "source",
+                        "match": {"value": source_id}
+                    }
+                ]
+            } if source_id else None
         )
 
         results = response.points
@@ -49,7 +55,6 @@ class QdrantStorage:
         contexts = []
         sources = set()
 
-        # 🔥 Extract keywords from question
         keywords = []
         if keyword:
             keywords = [w.lower() for w in keyword.split() if len(w) > 3]
@@ -64,13 +69,8 @@ class QdrantStorage:
 
             text_lower = text.lower()
 
-            # 🔥 Score based on keyword matches
-            score = 0
-            for k in keywords:
-                if k in text_lower:
-                    score += 1
+            score = sum(1 for k in keywords if k in text_lower)
 
-            # 🔥 Push higher score chunks to top
             if score > 0:
                 contexts.insert(0, text)
             else:

@@ -8,6 +8,10 @@ BASE_URL = os.getenv("BACKEND_URL")
 
 st.write("Backend URL:", BASE_URL)
 
+# 🔥 Store current file
+if "current_file" not in st.session_state:
+    st.session_state.current_file = None
+
 # ---------- Upload ----------
 st.title("📄 Upload PDF")
 
@@ -29,6 +33,7 @@ if uploaded:
         st.write("Response:", response.text)
 
     if response.status_code == 200:
+        st.session_state.current_file = uploaded.name  # 🔥 save file
         st.success("PDF processed successfully!")
     else:
         st.error("Upload failed")
@@ -42,29 +47,33 @@ question = st.text_input("Your question")
 top_k = st.number_input("Top K", 1, 10, 5)
 
 if st.button("Ask") and question:
-    with st.spinner("Thinking..."):
+    if not st.session_state.current_file:
+        st.warning("Please upload a PDF first")
+    else:
+        with st.spinner("Thinking..."):
 
-        response = requests.post(
-            f"{BASE_URL}/rag/query_pdf_ai",
-            json={
-                "question": question,
-                "top_k": int(top_k)
-            }
-        )
+            response = requests.post(
+                f"{BASE_URL}/rag/query_pdf_ai",
+                json={
+                    "question": question,
+                    "top_k": int(top_k),
+                    "source_id": st.session_state.current_file  # 🔥 isolation fix
+                }
+            )
 
-        st.write("Status:", response.status_code)
-        st.write("Raw:", response.text)
+            st.write("Status:", response.status_code)
+            st.write("Raw:", response.text)
 
-        if response.status_code == 200:
-            data = response.json()
+            if response.status_code == 200:
+                data = response.json()
 
-            st.subheader("Answer")
-            st.write(data.get("answer", ""))
+                st.subheader("Answer")
+                st.write(data.get("answer", ""))
 
-            sources = data.get("sources", [])
-            if sources:
-                st.caption("Sources")
-                for s in sources:
-                    st.write(f"- {s}")
-        else:
-            st.error("Query failed")
+                sources = data.get("sources", [])
+                if sources:
+                    st.caption("Sources")
+                    for s in sources:
+                        st.write(f"- {s}")
+            else:
+                st.error("Query failed")

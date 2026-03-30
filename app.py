@@ -1,178 +1,85 @@
 import os
-import uuid
-from fastapi import FastAPI, UploadFile, File
-from dotenv import load_dotenv
-from fastapi.middleware.cors import CORSMiddleware
-
-from data_loader import load_and_chunk_pdf, embed_texts
-from vector_db import QdrantStorage
-from openai import OpenAI
-
-load_dotenv()
-
-app = FastAPI()
-
-# ✅ CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+from qdrant_client import QdrantClient
+from qdrant_client.models import VectorParams, Distance, PointStruct
 
 
-# ---------------- TEST ----------------
-@app.get("/")
-def root():
-    return {"message": "API WORKING"}
+class QdrantStorage:
+    def __init__(self, collection="docs", dim=3072):
+        self.client = QdrantClient(
+            url=os.getenv("QDRANT_URL"),
+            api_key=os.getenv("QDRANT_API_KEY"),
+            timeout=30
+        )
+        self.collection = collection
+        self.dim = dim
 
+        if not self.client.collection_exists(self.collection):
+            self.client.create_collection(
+                collection_name=self.collection,
+                vectors_config=VectorParams(
+                    size=dim,
+                    distance=Distance.COSINE
+                ),
+            )
 
-# ---------------- RERANK FUNCTION ----------------
-def rerank_contexts(question: str, contexts: list[str]) -> list[str]:
-    if not contexts:
-        return []
+    def upsert(self, ids, vectors, payloads):
+        points = [
+            PointStruct(
+                id=ids[i],
+                vector=vectors[i],
+                payload=payloads[i]
+            )
+            for i in range(len(ids))
+        ]
+        self.client.upsert(self.collection, points=points)
 
-    joined_contexts = "\n\n".join(
-        [f"{i}. {c}" for i, c in enumerate(contexts)]
-    )
-
-    prompt = (
-        "You are given a list of context chunks.\n\n"
-        "Select the 3 MOST relevant chunks for answering the question.\n"
-        "Return ONLY the numbers separated by commas (e.g., 0,2,4).\n\n"
-        f"Question: {question}\n\n"
-        f"Contexts:\n{joined_contexts}"
-    )
-
-    try:
-        res = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
+    # 🔥 FIXED SEARCH WITH FILTER
+    def search(self, query_vector, top_k: int = 5, keyword: str = None, source_id: str = None):
+        response = self.client.query_points(
+            collection_name=self.collection,
+            query=query_vector.tolist() if hasattr(query_vector, "tolist") else query_vector,
+            with_payload=True,
+            limit=top_k * 3,
+            query_filter={
+                "must": [
+                    {
+                        "key": "source",
+                        "match": {"value": source_id}
+                    }
+                ]
+            } if source_id else None
         )
 
-        output = res.choices[0].message.content.strip()
+        results = response.points
 
-        indices = [
-            int(x.strip())
-            for x in output.split(",")
-            if x.strip().isdigit()
-        ]
+        contexts = []
+        sources = set()
 
-        selected = [contexts[i] for i in indices if i < len(contexts)]
+        keywords = []
+        if keyword:
+            keywords = [w.lower() for w in keyword.split() if len(w) > 3]
 
-        return selected if selected else contexts[:3]
+        for r in results:
+            payload = r.payload or {}
+            text = payload.get("text", "")
+            source = payload.get("source", "")
 
-    except Exception as e:
-        print("Rerank error:", str(e))
-        return contexts[:3]
+            if not text:
+                continue
 
+            text_lower = text.lower()
 
-# ---------------- INGEST ----------------
-@app.post("/rag/ingest_pdf")
-async def ingest_pdf(file: UploadFile = File(...)):
-    try:
-        temp_path = f"temp_{file.filename}"
+            score = sum(1 for k in keywords if k in text_lower)
 
-        with open(temp_path, "wb") as f:
-            f.write(await file.read())
-
-        source_id = file.filename
-
-        # 🔥 Limit chunks for performance
-        chunks = load_and_chunk_pdf(temp_path)[:200]
-
-        vecs = embed_texts(chunks)
-
-        ids = [
-            str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source_id}:{i}"))
-            for i in range(len(chunks))
-        ]
-
-        payloads = [
-            {"source": source_id, "text": chunks[i]}
-            for i in range(len(chunks))
-        ]
-
-        QdrantStorage().upsert(ids, vecs, payloads)
-
-        try:
-            os.remove(temp_path)
-        except:
-            pass
-
-        return {"ingested": len(chunks)}
-
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ---------------- QUERY ----------------
-@app.post("/rag/query_pdf_ai")
-def query_pdf(data: dict):
-    try:
-        question = data["question"]
-        top_k = int(data.get("top_k", 10))
-
-        # Step 1: Embed
-        query_vec = embed_texts([question])[0]
-
-        # Step 2: Search (hybrid)
-        store = QdrantStorage()
-        found = store.search(query_vec, top_k=15, keyword=question)
-
-        # 🔥 Step 3: RERANK
-        contexts = rerank_contexts(question, found["contexts"])
-        sources = found["sources"]
-
-        if not contexts:
-            return {
-                "answer": "No relevant context found.",
-                "sources": [],
-                "num_contexts": 0
-            }
-
-        # 🔥 Limit context size
-        MAX_CHARS = 4000
-        context_block = ""
-
-        for c in contexts:
-            if len(context_block) + len(c) < MAX_CHARS:
-                context_block += f"- {c}\n\n"
+            if score > 0:
+                contexts.insert(0, text)
             else:
-                break
+                contexts.append(text)
 
-        # 🔥 Final prompt (with fallback)
-        prompt = (
-            "You are a helpful assistant.\n\n"
-            "First try to answer using the provided context.\n"
-            "If the context is sufficient, use it.\n"
-            "If not, answer using your general knowledge.\n\n"
-            f"Context:\n{context_block}\n\n"
-            f"Question: {question}"
-        )
-
-        # Step 4: LLM
-        res = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You answer clearly and accurately."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.1,
-            max_tokens=400
-        )
-
-        answer = res.choices[0].message.content.strip()
+            if source:
+                sources.add(source)
 
         return {
-            "answer": answer,
-            "sources": sources,
-            "num_contexts": len(contexts),
+            "contexts": contexts[:top_k],
+            "sources": list(sources)
         }
-
-    except Exception as e:
-        return {"error": str(e)}
