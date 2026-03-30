@@ -81,7 +81,9 @@ async def ingest_pdf(file: UploadFile = File(...)):
 
         source_id = file.filename
 
-        chunks = load_and_chunk_pdf(temp_path)[:200]
+        # 🔥 Increased for full document coverage
+        chunks = load_and_chunk_pdf(temp_path)[:500]
+
         vecs = embed_texts(chunks)
 
         ids = [
@@ -113,20 +115,25 @@ def query_pdf(data: dict):
     try:
         question = data["question"]
         source_id = data.get("source_id")
-        top_k = int(data.get("top_k", 10))
+        top_k = int(data.get("top_k", 25))
 
-        query_vec = embed_texts([question])[0]
+        # 🔥 Expand query for better matching (especially "end" questions)
+        expanded_question = question + " final ending conclusion summary outcome"
+
+        query_vec = embed_texts([expanded_question])[0]
 
         store = QdrantStorage()
+
+        # 🔥 Deeper retrieval
         found = store.search(
             query_vec,
-            top_k=15,
+            top_k=30,
             keyword=question,
-            source_id=source_id   # 🔥 isolation fix
+            source_id=source_id
         )
 
-        # 🔥 reranking
-        contexts = rerank_contexts(question, found["contexts"])
+        # 🔥 Rerank from larger pool
+        contexts = rerank_contexts(question, found["contexts"][:15])
         sources = found["sources"]
 
         if not contexts:
@@ -136,8 +143,8 @@ def query_pdf(data: dict):
                 "num_contexts": 0
             }
 
-        # 🔥 limit context size
-        MAX_CHARS = 4000
+        # 🔥 Larger context window
+        MAX_CHARS = 5000
         context_block = ""
 
         for c in contexts:
@@ -146,9 +153,12 @@ def query_pdf(data: dict):
             else:
                 break
 
+        # 🔥 Improved prompt (handles stories better)
         prompt = (
-            "Answer using the context below.\n\n"
-            "If context is not enough, use general knowledge.\n\n"
+            "Answer the question using the context below.\n\n"
+            "If the question refers to a story, focus on the relevant section "
+            "(beginning, middle, or ending if mentioned).\n\n"
+            "If context is insufficient, use general knowledge.\n\n"
             f"Context:\n{context_block}\n\n"
             f"Question: {question}"
         )
@@ -156,7 +166,7 @@ def query_pdf(data: dict):
         res = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Give clear answers."},
+                {"role": "system", "content": "Give precise and helpful answers."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
